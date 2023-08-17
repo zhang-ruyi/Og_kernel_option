@@ -1,0 +1,202 @@
+diff --git a/Makefile b/Makefile
+index 22e392649b02..bce193d121eb 100644
+--- a/Makefile
++++ b/Makefile
+@@ -571,6 +571,7 @@ KBUILD_CFLAGS += -Werror=return-type
+ KBUILD_CFLAGS += -Werror=strict-prototypes
+ KBUILD_CFLAGS += -Wno-format-security
+ KBUILD_CFLAGS += -Wno-trigraphs
++KBUILD_CFLAGS += -Wno-unused-function
+ 
+ KBUILD_CPPFLAGS := -D__KERNEL__
+ KBUILD_RUSTFLAGS := $(rust_common_flags) \
+@@ -769,6 +770,12 @@ endif
+ export CFLAGS_GCOV
+ 
+ # The arch Makefiles can override CC_FLAGS_FTRACE. We may also append it later.
++ifdef CONFIG_NO_AUTO_INLINE
++KBUILD_CFLAGS   += $(call cc-option, -fno-inline-functions) \
++		   $(call cc-option, -fno-inline-small-functions) \
++		   $(call cc-option, -fno-inline-functions-called-once)
++endif
++
+ ifdef CONFIG_FUNCTION_TRACER
+   CC_FLAGS_FTRACE := -pg
+ endif
+@@ -828,6 +835,12 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, format-truncation)
+ KBUILD_CFLAGS	+= $(call cc-disable-warning, format-overflow)
+ KBUILD_CFLAGS	+= $(call cc-disable-warning, address-of-packed-member)
+ 
++ifdef CONFIG_CC_OPTIMIZE_FOR_DEBUGGING
++KBUILD_CFLAGS	+= $(call cc-option, -Og)
++KBUILD_CFLAGS	+= $(call cc-option, -Wno-unused-variable)
++KBUILD_CFLAGS   += $(call cc-disable-warning,maybe-uninitialized,)
++else
++
+ ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
+ KBUILD_CFLAGS += -O2
+ KBUILD_RUSTFLAGS += -Copt-level=2
+@@ -835,6 +848,8 @@ else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+ KBUILD_CFLAGS += -Os
+ KBUILD_RUSTFLAGS += -Copt-level=s
+ endif
++endif
++
+ 
+ # Always set `debug-assertions` and `overflow-checks` because their default
+ # depends on `opt-level` and `debug-assertions`, respectively.
+diff --git a/arch/arm/mm/mmu.c b/arch/arm/mm/mmu.c
+index 13fc4bb5f792..379db1d02a13 100644
+--- a/arch/arm/mm/mmu.c
++++ b/arch/arm/mm/mmu.c
+@@ -1738,7 +1738,7 @@ static void __init early_fixmap_shutdown(void)
+ 		pte_t *pte;
+ 		struct map_desc map;
+ 
+-		map.virtual = fix_to_virt(i);
++		map.virtual = __fix_to_virt(i);
+ 		pte = pte_offset_early_fixmap(pmd_off_k(map.virtual), map.virtual);
+ 
+ 		/* Only i/o device mappings are supported ATM */
+diff --git a/include/linux/compiler_attributes.h b/include/linux/compiler_attributes.h
+index 00efa35c350f..0f26918284a9 100644
+--- a/include/linux/compiler_attributes.h
++++ b/include/linux/compiler_attributes.h
+@@ -147,7 +147,7 @@
+  *
+  *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-error-function-attribute
+  */
+-#if __has_attribute(__error__)
++#if __has_attribute(__error__) && !defined(CONFIG_CC_OPTIMIZE_FOR_DEBUGGING)
+ # define __compiletime_error(msg)       __attribute__((__error__(msg)))
+ #else
+ # define __compiletime_error(msg)
+@@ -360,7 +360,8 @@
+  *
+  *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-warning-function-attribute
+  */
+-#if __has_attribute(__warning__)
++//#if __has_attribute(__warning__)
++#if __has_attribute(__warning__) && !defined(CONFIG_CC_OPTIMIZE_FOR_DEBUGGING)
+ # define __compiletime_warning(msg)     __attribute__((__warning__(msg)))
+ #else
+ # define __compiletime_warning(msg)
+diff --git a/include/linux/compiler_types.h b/include/linux/compiler_types.h
+index 547ea1ff806e..32ed2bc09810 100644
+--- a/include/linux/compiler_types.h
++++ b/include/linux/compiler_types.h
+@@ -364,7 +364,8 @@ struct ftrace_likely_data {
+ 	(sizeof(t) == sizeof(char) || sizeof(t) == sizeof(short) || \
+ 	 sizeof(t) == sizeof(int) || sizeof(t) == sizeof(long))
+ 
+-#ifdef __OPTIMIZE__
++#if !defined(CONFIG_CC_OPTIMIZE_FOR_DEBUGGING)
++#ifdef __OPTIMIZE__ 
+ # define __compiletime_assert(condition, msg, prefix, suffix)		\
+ 	do {								\
+ 		/*							\
+@@ -377,7 +378,10 @@ struct ftrace_likely_data {
+ 		if (!(condition))					\
+ 			prefix ## suffix();				\
+ 	} while (0)
+-#else
++#else 
++# define __compiletime_assert(condition, msg, prefix, suffix) do { } while (0)
++#endif
++# else
+ # define __compiletime_assert(condition, msg, prefix, suffix) do { } while (0)
+ #endif
+ 
+diff --git a/init/Kconfig b/init/Kconfig
+index f7f65af4ee12..91003ff53602 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -1360,6 +1360,25 @@ choice
+ 	prompt "Compiler optimization level"
+ 	default CC_OPTIMIZE_FOR_PERFORMANCE
+ 
++config CC_OPTIMIZE_FOR_DEBUGGING
++	bool "Optimize for better debugging experience (-Og)"
++	select NO_AUTO_INLINE
++	help
++	  This will apply GCC '-Og' optimization level which is supported
++	  since GCC 4.8. This optimization level offers a reasonable level
++	  of optimization while maintaining fast compilation and a good
++	  debugging experience. It is similar to '-O1' while preferring to
++	  keep debug ability over runtime speed. The overall performance
++	  will drop a bit (~6%).
++
++	  Use only if you want to debug the kernel, especially if you want
++	  to have better kernel debugging experience with gdb facilities
++	  like kgdb or qemu. If enabling this option breaks your kernel,
++	  you should either disable this or find a fix (mostly in the arch
++	  code).
++
++	  If unsure, select N.
++
+ config CC_OPTIMIZE_FOR_PERFORMANCE
+ 	bool "Optimize for performance (-O2)"
+ 	help
+@@ -1415,6 +1434,7 @@ config LD_ORPHAN_WARN_LEVEL
+         default "error" if WERROR
+         default "warn"
+ 
++
+ config SYSCTL
+ 	bool
+ 
+diff --git a/kernel/bpf/core.c b/kernel/bpf/core.c
+index dc85240a0134..05041f034bb3 100644
+--- a/kernel/bpf/core.c
++++ b/kernel/bpf/core.c
+@@ -598,13 +598,13 @@ static unsigned long bpf_get_ksym_start(struct latch_tree_node *n)
+ 	return container_of(n, struct bpf_ksym, tnode)->start;
+ }
+ 
+-static __always_inline bool bpf_tree_less(struct latch_tree_node *a,
++static bool bpf_tree_less(struct latch_tree_node *a,
+ 					  struct latch_tree_node *b)
+ {
+ 	return bpf_get_ksym_start(a) < bpf_get_ksym_start(b);
+ }
+ 
+-static __always_inline int bpf_tree_comp(void *key, struct latch_tree_node *n)
++static int bpf_tree_comp(void *key, struct latch_tree_node *n)
+ {
+ 	unsigned long val = (unsigned long)key;
+ 	const struct bpf_ksym *ksym;
+diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
+index fbc89baf7de6..92ad4c139dbd 100644
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -423,6 +423,30 @@ config GDB_SCRIPTS
+ 	  additional functions are available to analyze a Linux kernel
+ 	  instance. See Documentation/dev-tools/gdb-kernel-debugging.rst
+ 	  for further details.
++config NO_AUTO_INLINE
++	bool "Disable compiler auto-inline optimizations"
++	help
++	  This will prevent the compiler from optimizing the kernel by
++	  auto-inlining functions not marked with the inline keyword.
++	  With this option, only functions explicitly marked with
++	  "inline" will be inlined. This will allow the function tracer
++	  to trace more functions because it only traces functions that
++	  the compiler has not inlined.
++
++	  Enabling this function can help debugging a kernel if using
++	  the function tracer. But it can also change how the kernel
++	  works, because inlining functions may change the timing,
++	  which could make it difficult while debugging race conditions.
++
++	  If unsure, select N.
++
++config ENABLE_WARN_DEPRECATED
++	bool "Enable __deprecated logic"
++	default y
++	help
++	  Enable the __deprecated logic in the kernel build.
++	  Disable this to suppress the "warning: 'foo' is deprecated
++	  (declared at kernel/power/somefile.c:1234)" messages.
+ 
+ endif # DEBUG_INFO
+ 
