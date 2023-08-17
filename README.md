@@ -12,3 +12,5 @@
 
 # apply patch
     git apply xxx.patch
+
+* verify with <= gcc-11  and <= aarch-gcc11
