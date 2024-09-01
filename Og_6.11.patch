@@ -1,52 +1,46 @@
 diff --git a/Makefile b/Makefile
-index 22e392649b02..bce193d121eb 100644
+index 7b60eb103c5d..02edc63279ed 100644
 --- a/Makefile
 +++ b/Makefile
-@@ -571,6 +571,7 @@ KBUILD_CFLAGS += -Werror=return-type
- KBUILD_CFLAGS += -Werror=strict-prototypes
- KBUILD_CFLAGS += -Wno-format-security
- KBUILD_CFLAGS += -Wno-trigraphs
-+KBUILD_CFLAGS += -Wno-unused-function
- 
- KBUILD_CPPFLAGS := -D__KERNEL__
- KBUILD_RUSTFLAGS := $(rust_common_flags) \
-@@ -769,6 +770,12 @@ endif
+@@ -743,6 +743,12 @@ CFLAGS_GCOV	+= -fno-tree-loop-im
+ endif
  export CFLAGS_GCOV
  
- # The arch Makefiles can override CC_FLAGS_FTRACE. We may also append it later.
 +ifdef CONFIG_NO_AUTO_INLINE
 +KBUILD_CFLAGS   += $(call cc-option, -fno-inline-functions) \
-+		   $(call cc-option, -fno-inline-small-functions) \
-+		   $(call cc-option, -fno-inline-functions-called-once)
++          $(call cc-option, -fno-inline-small-functions) \
++          $(call cc-option, -fno-inline-functions-called-once)
 +endif
 +
+ # The arch Makefiles can override CC_FLAGS_FTRACE. We may also append it later.
  ifdef CONFIG_FUNCTION_TRACER
    CC_FLAGS_FTRACE := -pg
- endif
-@@ -828,6 +835,12 @@ KBUILD_CFLAGS	+= $(call cc-disable-warning, format-truncation)
- KBUILD_CFLAGS	+= $(call cc-disable-warning, format-overflow)
- KBUILD_CFLAGS	+= $(call cc-disable-warning, address-of-packed-member)
+@@ -799,13 +805,22 @@ endif # need-config
+ 
+ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
  
 +ifdef CONFIG_CC_OPTIMIZE_FOR_DEBUGGING
-+KBUILD_CFLAGS	+= $(call cc-option, -Og)
-+KBUILD_CFLAGS	+= $(call cc-option, -Wno-unused-variable)
++KBUILD_CFLAGS  += $(call cc-option, -Og)
++KBUILD_CFLAGS  += $(call cc-option, -Wno-unused-variable)
 +KBUILD_CFLAGS   += $(call cc-disable-warning,maybe-uninitialized,)
++KBUILD_CFLAGS   += $(call cc-disable-warning,unused-function,)
 +else
-+
  ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
  KBUILD_CFLAGS += -O2
  KBUILD_RUSTFLAGS += -Copt-level=2
-@@ -835,6 +848,8 @@ else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+-else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
++else
++ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
  KBUILD_CFLAGS += -Os
  KBUILD_RUSTFLAGS += -Copt-level=s
  endif
 +endif
-+
++endif
  
  # Always set `debug-assertions` and `overflow-checks` because their default
  # depends on `opt-level` and `debug-assertions`, respectively.
 diff --git a/arch/arm/mm/mmu.c b/arch/arm/mm/mmu.c
-index 13fc4bb5f792..379db1d02a13 100644
+index 3f774856ca67..eacceafa2044 100644
 --- a/arch/arm/mm/mmu.c
 +++ b/arch/arm/mm/mmu.c
 @@ -1738,7 +1738,7 @@ static void __init early_fixmap_shutdown(void)
@@ -58,8 +52,25 @@ index 13fc4bb5f792..379db1d02a13 100644
  		pte = pte_offset_early_fixmap(pmd_off_k(map.virtual), map.virtual);
  
  		/* Only i/o device mappings are supported ATM */
+diff --git a/include/linux/bpf.h b/include/linux/bpf.h
+index 3b94ec161e8c..2e6d99ef5d0d 100644
+--- a/include/linux/bpf.h
++++ b/include/linux/bpf.h
+@@ -1231,11 +1231,7 @@ struct bpf_dispatcher {
+ #endif
+ };
+ 
+-#ifndef __bpfcall
+-#define __bpfcall __nocfi
+-#endif
+-
+-static __always_inline __bpfcall unsigned int bpf_dispatcher_nop_func(
++static __nocfi unsigned int bpf_dispatcher_nop_func(
+ 	const void *ctx,
+ 	const struct bpf_insn *insnsi,
+ 	bpf_func_t bpf_func)
 diff --git a/include/linux/compiler_attributes.h b/include/linux/compiler_attributes.h
-index 00efa35c350f..0f26918284a9 100644
+index 32284cd26d52..54969838ae5f 100644
 --- a/include/linux/compiler_attributes.h
 +++ b/include/linux/compiler_attributes.h
 @@ -147,7 +147,7 @@
@@ -71,7 +82,7 @@ index 00efa35c350f..0f26918284a9 100644
  # define __compiletime_error(msg)       __attribute__((__error__(msg)))
  #else
  # define __compiletime_error(msg)
-@@ -360,7 +360,8 @@
+@@ -385,7 +385,8 @@
   *
   *   gcc: https://gcc.gnu.org/onlinedocs/gcc/Common-Function-Attributes.html#index-warning-function-attribute
   */
@@ -82,36 +93,32 @@ index 00efa35c350f..0f26918284a9 100644
  #else
  # define __compiletime_warning(msg)
 diff --git a/include/linux/compiler_types.h b/include/linux/compiler_types.h
-index 547ea1ff806e..32ed2bc09810 100644
+index f14c275950b5..430e04c71216 100644
 --- a/include/linux/compiler_types.h
 +++ b/include/linux/compiler_types.h
-@@ -364,7 +364,8 @@ struct ftrace_likely_data {
+@@ -477,6 +477,7 @@ struct ftrace_likely_data {
  	(sizeof(t) == sizeof(char) || sizeof(t) == sizeof(short) || \
  	 sizeof(t) == sizeof(int) || sizeof(t) == sizeof(long))
  
--#ifdef __OPTIMIZE__
 +#if !defined(CONFIG_CC_OPTIMIZE_FOR_DEBUGGING)
-+#ifdef __OPTIMIZE__ 
+ #ifdef __OPTIMIZE__
  # define __compiletime_assert(condition, msg, prefix, suffix)		\
  	do {								\
- 		/*							\
-@@ -377,7 +378,10 @@ struct ftrace_likely_data {
- 		if (!(condition))					\
- 			prefix ## suffix();				\
- 	} while (0)
--#else
-+#else 
-+# define __compiletime_assert(condition, msg, prefix, suffix) do { } while (0)
-+#endif
-+# else
+@@ -493,6 +494,9 @@ struct ftrace_likely_data {
+ #else
  # define __compiletime_assert(condition, msg, prefix, suffix) do { } while (0)
  #endif
++# else
++# define __compiletime_assert(condition, msg, prefix, suffix) do { } while (0)
++#endif
  
+ #define _compiletime_assert(condition, msg, prefix, suffix) \
+ 	__compiletime_assert(condition, msg, prefix, suffix)
 diff --git a/init/Kconfig b/init/Kconfig
-index f7f65af4ee12..91003ff53602 100644
+index 5783a0b87517..ad395d0f569f 100644
 --- a/init/Kconfig
 +++ b/init/Kconfig
-@@ -1360,6 +1360,25 @@ choice
+@@ -1400,6 +1400,25 @@ choice
  	prompt "Compiler optimization level"
  	default CC_OPTIMIZE_FOR_PERFORMANCE
  
@@ -137,7 +144,7 @@ index f7f65af4ee12..91003ff53602 100644
  config CC_OPTIMIZE_FOR_PERFORMANCE
  	bool "Optimize for performance (-O2)"
  	help
-@@ -1415,6 +1434,7 @@ config LD_ORPHAN_WARN_LEVEL
+@@ -1455,6 +1474,7 @@ config LD_ORPHAN_WARN_LEVEL
          default "error" if WERROR
          default "warn"
  
@@ -145,31 +152,31 @@ index f7f65af4ee12..91003ff53602 100644
  config SYSCTL
  	bool
  
-diff --git a/kernel/bpf/core.c b/kernel/bpf/core.c
-index dc85240a0134..05041f034bb3 100644
---- a/kernel/bpf/core.c
-+++ b/kernel/bpf/core.c
-@@ -598,13 +598,13 @@ static unsigned long bpf_get_ksym_start(struct latch_tree_node *n)
- 	return container_of(n, struct bpf_ksym, tnode)->start;
+diff --git a/kernel/module/tree_lookup.c b/kernel/module/tree_lookup.c
+index 277197977d43..02d24de0f661 100644
+--- a/kernel/module/tree_lookup.c
++++ b/kernel/module/tree_lookup.c
+@@ -33,13 +33,13 @@ static __always_inline unsigned long __mod_tree_size(struct latch_tree_node *n)
+ 	return (unsigned long)mod_mem->size;
  }
  
--static __always_inline bool bpf_tree_less(struct latch_tree_node *a,
-+static bool bpf_tree_less(struct latch_tree_node *a,
- 					  struct latch_tree_node *b)
+-static __always_inline bool
++static bool
+ mod_tree_less(struct latch_tree_node *a, struct latch_tree_node *b)
  {
- 	return bpf_get_ksym_start(a) < bpf_get_ksym_start(b);
+ 	return __mod_tree_val(a) < __mod_tree_val(b);
  }
  
--static __always_inline int bpf_tree_comp(void *key, struct latch_tree_node *n)
-+static int bpf_tree_comp(void *key, struct latch_tree_node *n)
+-static __always_inline int
++static int
+ mod_tree_comp(void *key, struct latch_tree_node *n)
  {
  	unsigned long val = (unsigned long)key;
- 	const struct bpf_ksym *ksym;
 diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
-index fbc89baf7de6..92ad4c139dbd 100644
+index a30c03a66172..fd1c93937c61 100644
 --- a/lib/Kconfig.debug
 +++ b/lib/Kconfig.debug
-@@ -423,6 +423,30 @@ config GDB_SCRIPTS
+@@ -433,6 +433,30 @@ config GDB_SCRIPTS
  	  additional functions are available to analyze a Linux kernel
  	  instance. See Documentation/dev-tools/gdb-kernel-debugging.rst
  	  for further details.
